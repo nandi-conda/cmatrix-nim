@@ -19,9 +19,9 @@
 ]#
 
 import std/[os, osproc, posix, random, strutils, termios, unicode]
-import ncurses
+import ncurses, kana_glyphs
 
-const Version = "2.0"
+const Version = "2.1.0"
 
 var SIGWINCH {.importc, header: "<signal.h>".}: cint
 proc setlocale(category: cint, locale: cstring): cstring {.importc, header: "<locale.h>".}
@@ -40,6 +40,54 @@ var
   spaces: seq[int]   # Spaces left to fill
   updates: seq[int]  # Update speed of each column
   signalStatus {.volatile.}: cint = 0
+  pixelKana = false  # draw pre-rendered katakana as braille pixel art
+  kanaCells: seq[array[4, string]]  # per glyph: top-left, top-right, bottom-left, bottom-right
+
+# In pixel mode each glyph is 4x8 pixels: 2x2 braille cells plus a gap column.
+const
+  GlyphRows = 2
+  GlyphStride = 3
+
+proc gridLines(): int =
+  if pixelKana: int(LINES) div GlyphRows else: int(LINES)
+
+proc gridCols(): int =
+  if pixelKana: (int(COLS) div GlyphStride) * 2 else: int(COLS)
+
+proc screenX(j: int): cint =
+  if pixelKana: cint((j div 2) * GlyphStride) else: cint(j)
+
+proc buildKanaCells() =
+  # Braille dot bits for (x, y) inside a 2x4 cell.
+  const dot = [[0x01, 0x02, 0x04, 0x40], [0x08, 0x10, 0x20, 0x80]]
+  for glyph in KanaGlyphs:
+    var cells: array[4, string]
+    for c in 0 .. 3:
+      let (cx, cy) = (c mod 2, c div 2)
+      var bits = 0
+      for y in 0 .. 3:
+        let row = int(glyph[cy * 4 + y])
+        for x in 0 .. 1:
+          if (row shr (3 - (cx * 2 + x)) and 1) == 1:
+            bits = bits or dot[x][y]
+      cells[c] = $Rune(0x2800 + bits)
+    kanaCells.add cells
+
+proc emit(row: int, col: cint, val: int, text: string) =
+  ## Draws one matrix cell. In pixel mode a katakana becomes a 2x2 block of
+  ## braille cells; anything else is drawn top-left with the rest blanked.
+  if not pixelKana:
+    moveTo(cint(row), col)
+    addstr(cstring(text))
+    return
+  let y = cint(row * GlyphRows)
+  if val >= KanaFirst and val <= KanaLast:
+    let cells = kanaCells[val - KanaFirst]
+    moveTo(y, col); addstr(cstring(cells[0] & cells[1]))
+    moveTo(y + 1, col); addstr(cstring(cells[2] & cells[3]))
+  else:
+    moveTo(y, col); addstr(cstring(text & " "))
+    moveTo(y + 1, col); addstr("  ")
 
 proc fontCommand(): string =
   if findExe("consolechars").len > 0: "consolechars"
@@ -86,11 +134,12 @@ proc die(msg: string) =
   quit(0)
 
 proc usage() =
-  echo " Usage: cmatrix-nim -[abBcfhlsmVxk] [-u delay] [-C color] [-t tty] [-M message]"
+  echo " Usage: cmatrix-nim -[abBcfhlsmPVxk] [-u delay] [-C color] [-t tty] [-M message]"
   echo " -a: Asynchronous scroll"
   echo " -b: Bold characters on"
   echo " -B: All bold characters (overrides -b)"
   echo " -c: Use Japanese characters as seen in the original matrix. Requires appropriate fonts"
+  echo " -P: Japanese characters pre-rendered as braille pixel art (no CJK font needed)"
   echo " -f: Force the linux $TERM type to be on"
   echo " -l: Linux mode (uses matrix console font)"
   echo " -L: Lock mode (can be closed from another terminal)"
@@ -116,8 +165,8 @@ proc version() =
 proc rnd(n: int): int = rand(max(n, 1) - 1)
 
 proc varInit() =
-  let lines = int(LINES)
-  let cols = int(COLS)
+  let lines = gridLines()
+  let cols = gridCols()
   matrix = newSeq[seq[Cell]](lines + 1)
   for i in 0 .. lines:
     matrix[i] = newSeq[Cell](cols)
@@ -237,6 +286,9 @@ proc main() =
       of 'B': bold = 2
       of 'C': mcolor = parseColor(optarg)
       of 'c': classic = true
+      of 'P':
+        classic = true
+        pixelKana = true
       of 'f': force = true
       of 'l': console = true
       of 'L':
@@ -332,6 +384,8 @@ proc main() =
   let randnum = highnum - randmin
   proc randChar(): int = rnd(randnum) + randmin
 
+  if pixelKana:
+    buildKanaCells()
   varInit()
 
   while true:
@@ -376,8 +430,8 @@ proc main() =
         of ord('p'), ord('P'): pause = not pause
         else: discard
 
-    let lines = int(LINES)
-    let cols = int(COLS)
+    let lines = gridLines()
+    let cols = gridCols()
     for j in countup(0, cols - 1, 2):
       if (count > updates[j] or not asynch) and not pause:
         # I don't like old-style scrolling, yuck
@@ -451,7 +505,8 @@ proc main() =
       # A simple hack
       let (y0, z0) = if not oldstyle: (1, lines) else: (0, lines - 1)
       for i in y0 .. z0:
-        moveTo(cint(i - y0), cint(j))
+        let row = i - y0
+        let x = screenX(j)
         let cell = matrix[i][j]
 
         if cell.val == 0 or (cell.isHead and not rainbow):
@@ -459,12 +514,14 @@ proc main() =
           attron(COLOR_PAIR(cint(COLOR_WHITE)))
           if bold != 0: attron(A_BOLD)
           if cell.val == 0:
-            if console or xwindow: addch(183)
-            else: addch(Chtype('&'))
+            if console or xwindow:
+              moveTo(cint(row), x)
+              addch(183)
+            else: emit(row, x, 0, "&")
           elif cell.val == -1:
-            addch(Chtype(' '))
+            emit(row, x, -1, " ")
           else:
-            addch(Chtype(cell.val))
+            emit(row, x, cell.val, $Rune(cell.val))
           attroff(COLOR_PAIR(cint(COLOR_WHITE)))
           if bold != 0: attroff(A_BOLD)
           if console or xwindow: attroff(A_ALTCHARSET)
@@ -475,18 +532,18 @@ proc main() =
           attron(COLOR_PAIR(cint(mcolor)))
           if cell.val == 1:
             if bold != 0: attron(A_BOLD)
-            addch(Chtype('|'))
+            emit(row, x, 1, "|")
             if bold != 0: attroff(A_BOLD)
           else:
             if console or xwindow: attron(A_ALTCHARSET)
             let isBold = bold == 2 or (bold == 1 and cell.val mod 2 == 0)
             if isBold: attron(A_BOLD)
             if cell.val == -1:
-              addch(Chtype(' '))
+              emit(row, x, -1, " ")
             elif lambda and cell.val != ord(' '):
-              addstr("λ")
+              emit(row, x, -2, "λ")
             else:
-              addstr(cstring($Rune(cell.val)))
+              emit(row, x, cell.val, $Rune(cell.val))
             if isBold: attroff(A_BOLD)
             if console or xwindow: attroff(A_ALTCHARSET)
           attroff(COLOR_PAIR(cint(mcolor)))
@@ -494,8 +551,8 @@ proc main() =
     # check if -M and/or -L was used
     if msg.len > 0:
       # Add our message to the screen
-      let msgX = cint(lines div 2)
-      let msgY = cint(cols div 2 - msg.len div 2)
+      let msgX = LINES div 2
+      let msgY = cint(int(COLS) div 2 - msg.len div 2)
       let pad = repeat(' ', msg.len + 4)
 
       moveTo(msgX - 1, msgY - 2)
