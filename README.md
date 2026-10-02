@@ -30,7 +30,13 @@ Or build the conda package with `rattler-build build -r recipe.yaml -c conda-for
 cmatrix-nim -[abBcfhlsmVxk] [-u delay] [-C color] [-t tty] [-M message]
 ```
 
-Run `cmatrix-nim -h` for every flag. While running: `q` quits, `0`-`9` set speed,
+Run `cmatrix-nim -h` for every flag.
+
+`-c` prints real half-width katakana, so your terminal needs a font that covers
+them (e.g. Noto Sans Mono CJK JP). `-P` needs no CJK font: the katakana are
+pre-rendered into the binary as 4x8 bitmaps (from GNU Unifont, mirrored like in
+the film) and drawn with braille characters, two cells wide and two rows tall.
+Regenerate them with `python3 tools/gen_kana.py`. While running: `q` quits, `0`-`9` set speed,
 `!@#$%^&` change color, `r` rainbow, `m` lambda, `a` async, `b`/`B`/`n` bold, `p` pause.
 
 Differences from the C version: the `-s` screensaver mode does not re-inject the
