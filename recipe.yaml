@@ -1,0 +1,38 @@
+context:
+  version: "2.0.0"
+
+package:
+  name: cmatrix-nim
+  version: ${{ version }}
+
+source:
+  path: .
+
+build:
+  number: 0
+  script: |
+    nim c -d:release --hints:off \
+      --passC:"-I$PREFIX/include" \
+      --passL:"-L$PREFIX/lib -Wl,-rpath,$PREFIX/lib" \
+      -o:"$PREFIX/bin/cmatrix-nim" src/cmatrix_nim.nim
+
+requirements:
+  build:
+    - ${{ compiler('c') }}
+    - nim >=2.0
+  host:
+    - ncurses
+  run:
+    - ncurses
+
+tests:
+  - script:
+      - cmatrix-nim -V
+      - cmatrix-nim -h
+
+about:
+  homepage: https://github.com/nandi-conda/cmatrix-nim
+  repository: https://github.com/nandi-conda/cmatrix-nim
+  license: GPL-3.0-or-later
+  license_file: COPYING
+  summary: Terminal based 'The Matrix' like screen saver, ported from C to Nim

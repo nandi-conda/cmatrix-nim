@@ -1,0 +1,40 @@
+name: Build and publish to prefix.dev
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CHANNEL: nandi-testing
+
+permissions:
+  contents: read
+  id-token: write # trusted publishing to prefix.dev
+
+jobs:
+  build:
+    name: Build and upload
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build with rattler-build
+        uses: prefix-dev/rattler-build-action@v0.2.34
+        with:
+          recipe-path: recipe.yaml
+          upload-artifact: true
+
+      - name: Upload to prefix.dev
+        if: github.event_name != 'pull_request'
+        shell: bash
+        run: |
+          curl -Ls "https://github.com/prefix-dev/rattler-build/releases/latest/download/rattler-build-x86_64-unknown-linux-musl" -o rattler-build
+          chmod +x rattler-build
+          # Uses PREFIX_API_KEY when the secret is set, otherwise trusted publishing (OIDC).
+          [ -n "$PREFIX_API_KEY" ] || unset PREFIX_API_KEY
+          ./rattler-build upload prefix -c "$CHANNEL" output/linux-64/*.conda --skip-existing -v
+        env:
+          PREFIX_API_KEY: ${{ secrets.PREFIX_API_KEY }}
