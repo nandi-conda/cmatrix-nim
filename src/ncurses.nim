@@ -25,8 +25,10 @@ var
   stdscr* {.importc, header: hdr.}: ptr Window
   LINES* {.importc, header: hdr.}: cint
   COLS* {.importc, header: hdr.}: cint
+  COLORS* {.importc, header: hdr.}: cint
   A_BOLD* {.importc, header: hdr.}: cint
   A_ALTCHARSET* {.importc, header: hdr.}: cint
+  A_DIM* {.importc, header: hdr.}: cint
 
 {.push importc, header: hdr, cdecl, discardable.}
 proc initscr*(): ptr Window

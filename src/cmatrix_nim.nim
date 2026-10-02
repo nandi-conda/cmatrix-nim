@@ -21,7 +21,7 @@
 import std/[os, osproc, posix, random, strutils, termios, unicode]
 import ncurses, kana_glyphs
 
-const Version = "2.2.0"
+const Version = "2.3.0"
 
 var SIGWINCH {.importc, header: "<signal.h>".}: cint
 proc setlocale(category: cint, locale: cstring): cstring {.importc, header: "<locale.h>".}
@@ -43,6 +43,8 @@ var
   pixelKana = false  # draw pre-rendered katakana as braille pixel art
   wideKana = false   # full-width katakana, two terminal cells each
   kanaCells: seq[array[4, string]]  # per glyph: top-left, top-right, bottom-left, bottom-right
+  film = false       # look of the film's rain: fading trails, digits mixed in
+  fadeLevels = 0     # colour pairs available for the fading trail
 
 # In pixel mode each glyph is 4x8 pixels: 2x2 braille cells plus a gap column.
 # Wide mode uses the same stride: a two-cell katakana plus a gap column.
@@ -52,6 +54,14 @@ const
 
   GlyphRows = 2
   GlyphStride = 3
+
+  # The film mixes digits and a few symbols in with the mirrored katakana.
+  FilmExtras = "0123456789Z:.\"=*+-<>|"
+
+  # Trail colours for -F, from the white-hot head down to the fading tail.
+  # 256-colour terminals get the full ramp; 8-colour ones use attributes.
+  FadePairBase = 16
+  FadeRamp = [231.cshort, 120, 46, 40, 34, 28, 22]
 
 proc gridLines(): int =
   if pixelKana: int(LINES) div GlyphRows else: int(LINES)
@@ -143,13 +153,14 @@ proc die(msg: string) =
   quit(0)
 
 proc usage() =
-  echo " Usage: cmatrix-nim -[abBcHfhlsmPVxk] [-u delay] [-C color] [-t tty] [-M message]"
+  echo " Usage: cmatrix-nim -[abBcHFfhlsmPVxk] [-u delay] [-C color] [-t tty] [-M message]"
   echo " -a: Asynchronous scroll"
   echo " -b: Bold characters on"
   echo " -B: All bold characters (overrides -b)"
   echo " -c: Use Japanese characters as seen in the original matrix, full-width. Requires appropriate fonts"
   echo " -H: Like -c but half-width katakana, as in the C cmatrix (narrow in most fonts)"
   echo " -P: Japanese characters pre-rendered as braille pixel art (no CJK font needed)"
+  echo " -F: Film look: katakana mixed with digits, glowing heads and trails that fade out"
   echo " -f: Force the linux $TERM type to be on"
   echo " -l: Linux mode (uses matrix console font)"
   echo " -L: Lock mode (can be closed from another terminal)"
@@ -256,6 +267,7 @@ proc main() =
     lambda = false
     pause = false
     classic = false
+    halfWidth = false
     changes = false
     msg = ""
     tty = ""
@@ -301,9 +313,13 @@ proc main() =
       of 'H':
         classic = true
         wideKana = false
+        halfWidth = true
       of 'P':
         classic = true
         pixelKana = true
+      of 'F':
+        film = true
+        classic = true
       of 'f': force = true
       of 'l': console = true
       of 'L':
@@ -381,6 +397,18 @@ proc main() =
     for c in [COLOR_GREEN, COLOR_WHITE, COLOR_RED, COLOR_CYAN,
               COLOR_MAGENTA, COLOR_BLUE, COLOR_YELLOW]:
       init_pair(c, c, bg)
+    if film and COLORS >= 256:
+      for k, c in FadeRamp:
+        init_pair(cshort(FadePairBase + k), c, bg)
+      fadeLevels = FadeRamp.len
+
+  if film:
+    # Full-width katakana unless -H or -P picked another glyph style.
+    if not halfWidth and not pixelKana: wideKana = true
+    # The film's streams fall at different speeds and flicker as they go.
+    asynch = true
+    changes = true
+    oldstyle = false
 
   # Set up values for random number generation
   var randmin, highnum: int
@@ -404,7 +432,9 @@ proc main() =
     randmin = 33
     highnum = 123
   let randnum = highnum - randmin
-  proc randChar(): int = rnd(randnum) + randmin
+  proc randChar(): int =
+    if film and rnd(5) == 0: ord(FilmExtras[rnd(FilmExtras.len)])
+    else: rnd(randnum) + randmin
 
   if pixelKana:
     buildKanaCells()
@@ -526,10 +556,52 @@ proc main() =
 
       # A simple hack
       let (y0, z0) = if not oldstyle: (1, lines) else: (0, lines - 1)
+
+      # For -F: how far each cell sits behind its stream's head. Streams
+      # fall downward, so walk up from the bottom of the column.
+      var behind: seq[int]
+      if film:
+        behind = newSeq[int](lines + 1)
+        var d = -1
+        for i in countdown(z0, y0):
+          let v = matrix[i][j].val
+          if v == ord(' ') or v == -1: d = -1
+          elif matrix[i][j].isHead: d = 0
+          elif d < 0: d = 1  # head already fell off the bottom
+          else: inc d
+          behind[i] = d
+
       for i in y0 .. z0:
         let row = i - y0
         let x = screenX(j)
         let cell = matrix[i][j]
+
+        if film and not rainbow:
+          let d = behind[i]
+          if d < 0:
+            emit(row, x, -1, " ")
+            continue
+          let text = if lambda: "λ" else: $Rune(cell.val)
+          var attrs: cint
+          if fadeLevels > 0 and mcolor == COLOR_GREEN:
+            # Head and the glyph just behind it glow; the rest of the ramp
+            # is spread over the stream's length so every tail fades out.
+            let level =
+              if d <= 1: d
+              else: min(2 + (d - 2) * (fadeLevels - 2) div max(length[j], 1),
+                        fadeLevels - 1)
+            attrs = COLOR_PAIR(cint(FadePairBase + level))
+            if d == 0 or bold == 2: attrs = attrs or A_BOLD
+          elif d == 0:
+            attrs = COLOR_PAIR(cint(COLOR_WHITE)) or A_BOLD
+          else:
+            attrs = COLOR_PAIR(cint(mcolor))
+            if d <= length[j] div 3: attrs = attrs or A_BOLD
+            elif d > length[j] * 2 div 3: attrs = attrs or A_DIM
+          attron(attrs)
+          emit(row, x, cell.val, text)
+          attroff(attrs)
+          continue
 
         if cell.val == 0 or (cell.isHead and not rainbow):
           if console or xwindow: attron(A_ALTCHARSET)

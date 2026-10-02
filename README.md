@@ -27,7 +27,7 @@ Or build the conda package with `rattler-build build -r recipe.yaml -c conda-for
 ## Usage
 
 ```
-cmatrix-nim -[abBcHfhlsmPVxk] [-u delay] [-C color] [-t tty] [-M message]
+cmatrix-nim -[abBcHFfhlsmPVxk] [-u delay] [-C color] [-t tty] [-M message]
 ```
 
 Run `cmatrix-nim -h` for every flag.
@@ -38,7 +38,14 @@ katakana the C cmatrix prints instead; those are one cell wide, so most fonts
 draw them as thin, squeezed glyphs. `-P` needs no CJK font: the katakana are
 pre-rendered into the binary as 4x8 bitmaps (from GNU Unifont, mirrored like in
 the film) and drawn with braille characters, two cells wide and two rows tall.
-Regenerate them with `python3 tools/gen_kana.py`. While running: `q` quits, `0`-`9` set speed,
+Regenerate them with `python3 tools/gen_kana.py`.
+
+`-F` goes for the look of the rain in the first film: katakana mixed with digits
+and a few symbols, a white glowing head, a trail that fades from bright to dark
+green, streams falling at different speeds and glyphs flickering as they fall.
+It uses full-width katakana by default; combine it with `-H` or `-P` for the
+other glyph styles. The fade needs a 256-colour terminal; elsewhere it falls
+back to bold and dim green. While running: `q` quits, `0`-`9` set speed,
 `!@#$%^&` change color, `r` rainbow, `m` lambda, `a` async, `b`/`B`/`n` bold, `p` pause.
 
 Differences from the C version: the `-s` screensaver mode does not re-inject the
