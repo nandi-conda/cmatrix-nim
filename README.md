@@ -27,13 +27,15 @@ Or build the conda package with `rattler-build build -r recipe.yaml -c conda-for
 ## Usage
 
 ```
-cmatrix-nim -[abBcfhlsmVxk] [-u delay] [-C color] [-t tty] [-M message]
+cmatrix-nim -[abBcHfhlsmPVxk] [-u delay] [-C color] [-t tty] [-M message]
 ```
 
 Run `cmatrix-nim -h` for every flag.
 
-`-c` prints real half-width katakana, so your terminal needs a font that covers
-them (e.g. Noto Sans Mono CJK JP). `-P` needs no CJK font: the katakana are
+`-c` prints real full-width katakana, two cells each, so your terminal needs a
+font that covers them (e.g. Noto Sans Mono CJK JP). `-H` uses the half-width
+katakana the C cmatrix prints instead; those are one cell wide, so most fonts
+draw them as thin, squeezed glyphs. `-P` needs no CJK font: the katakana are
 pre-rendered into the binary as 4x8 bitmaps (from GNU Unifont, mirrored like in
 the film) and drawn with braille characters, two cells wide and two rows tall.
 Regenerate them with `python3 tools/gen_kana.py`. While running: `q` quits, `0`-`9` set speed,

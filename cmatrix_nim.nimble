@@ -1,6 +1,6 @@
 # Package
 
-version       = "2.1.0"
+version       = "2.2.0"
 author        = "Chris Allegretta, Abishek V Ashok (original cmatrix); Nim port contributors"
 description   = "Terminal based 'The Matrix' like screen saver, ported to Nim"
 license       = "GPL-3.0-or-later"

@@ -21,7 +21,7 @@
 import std/[os, osproc, posix, random, strutils, termios, unicode]
 import ncurses, kana_glyphs
 
-const Version = "2.1.0"
+const Version = "2.2.0"
 
 var SIGWINCH {.importc, header: "<signal.h>".}: cint
 proc setlocale(category: cint, locale: cstring): cstring {.importc, header: "<locale.h>".}
@@ -41,10 +41,15 @@ var
   updates: seq[int]  # Update speed of each column
   signalStatus {.volatile.}: cint = 0
   pixelKana = false  # draw pre-rendered katakana as braille pixel art
+  wideKana = false   # full-width katakana, two terminal cells each
   kanaCells: seq[array[4, string]]  # per glyph: top-left, top-right, bottom-left, bottom-right
 
 # In pixel mode each glyph is 4x8 pixels: 2x2 braille cells plus a gap column.
+# Wide mode uses the same stride: a two-cell katakana plus a gap column.
 const
+  WideFirst = 0x30A1  # ァ
+  WideLast = 0x30F6   # ヶ
+
   GlyphRows = 2
   GlyphStride = 3
 
@@ -52,10 +57,10 @@ proc gridLines(): int =
   if pixelKana: int(LINES) div GlyphRows else: int(LINES)
 
 proc gridCols(): int =
-  if pixelKana: (int(COLS) div GlyphStride) * 2 else: int(COLS)
+  if pixelKana or wideKana: (int(COLS) div GlyphStride) * 2 else: int(COLS)
 
 proc screenX(j: int): cint =
-  if pixelKana: cint((j div 2) * GlyphStride) else: cint(j)
+  if pixelKana or wideKana: cint((j div 2) * GlyphStride) else: cint(j)
 
 proc buildKanaCells() =
   # Braille dot bits for (x, y) inside a 2x4 cell.
@@ -76,9 +81,13 @@ proc buildKanaCells() =
 proc emit(row: int, col: cint, val: int, text: string) =
   ## Draws one matrix cell. In pixel mode a katakana becomes a 2x2 block of
   ## braille cells; anything else is drawn top-left with the rest blanked.
+  ## In wide mode narrow characters are padded so they cover both cells.
   if not pixelKana:
     moveTo(cint(row), col)
-    addstr(cstring(text))
+    if wideKana and (val < WideFirst or val > WideLast):
+      addstr(cstring(text & " "))
+    else:
+      addstr(cstring(text))
     return
   let y = cint(row * GlyphRows)
   if val >= KanaFirst and val <= KanaLast:
@@ -134,11 +143,12 @@ proc die(msg: string) =
   quit(0)
 
 proc usage() =
-  echo " Usage: cmatrix-nim -[abBcfhlsmPVxk] [-u delay] [-C color] [-t tty] [-M message]"
+  echo " Usage: cmatrix-nim -[abBcHfhlsmPVxk] [-u delay] [-C color] [-t tty] [-M message]"
   echo " -a: Asynchronous scroll"
   echo " -b: Bold characters on"
   echo " -B: All bold characters (overrides -b)"
-  echo " -c: Use Japanese characters as seen in the original matrix. Requires appropriate fonts"
+  echo " -c: Use Japanese characters as seen in the original matrix, full-width. Requires appropriate fonts"
+  echo " -H: Like -c but half-width katakana, as in the C cmatrix (narrow in most fonts)"
   echo " -P: Japanese characters pre-rendered as braille pixel art (no CJK font needed)"
   echo " -f: Force the linux $TERM type to be on"
   echo " -l: Linux mode (uses matrix console font)"
@@ -285,7 +295,12 @@ proc main() =
         if bold != 2: bold = 1
       of 'B': bold = 2
       of 'C': mcolor = parseColor(optarg)
-      of 'c': classic = true
+      of 'c':
+        classic = true
+        wideKana = true
+      of 'H':
+        classic = true
+        wideKana = false
       of 'P':
         classic = true
         pixelKana = true
@@ -369,7 +384,14 @@ proc main() =
 
   # Set up values for random number generation
   var randmin, highnum: int
-  if classic:
+  if pixelKana:
+    wideKana = false
+  if classic and wideKana:
+    # Full-width katakana: two cells each, so they render at a real CJK
+    # glyph's width instead of being squeezed into one cell.
+    randmin = WideFirst
+    highnum = WideLast
+  elif classic:
     # Half-width kana characters. In the movie they are y-axis flipped, and
     # they appear alongside latin characters and numerals, but this is the
     # closest we can do with a standard unicode set and a single number range
