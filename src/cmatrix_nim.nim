@@ -100,6 +100,19 @@ proc restoreFont() =
   of "setfont": discard execCmd("setfont")
   else: discard
 
+const KDGKBTYPE = 0x4B33  # from <linux/kd.h>
+
+proc isLinuxConsole(fd: cint): bool =
+  ## True when fd refers to a Linux virtual console (what setfont and
+  ## consolechars need). Graphical terminal emulators and ssh sessions fail.
+  when defined(linux):
+    var kbType: cchar
+    ioctl(fd, KDGKBTYPE, addr kbType) == 0
+  else:
+    false
+
+var consoleNotice = ""
+
 proc teardown() =
   curs_set(1)
   clearScreen()
@@ -108,6 +121,8 @@ proc teardown() =
   endwin()
   if console:
     restoreFont()
+  if consoleNotice.len > 0:
+    stderr.writeLine(consoleNotice)
 
 proc finish() =
   teardown()
@@ -300,6 +315,7 @@ proc main() =
   if force and getEnv("TERM") != "linux":
     putEnv("TERM", "linux")
 
+  var outFd: cint = STDOUT_FILENO
   if tty.len > 0:
     var ftty: File
     if not open(ftty, tty, fmReadWriteExisting):
@@ -310,8 +326,15 @@ proc main() =
     if ttyscr == nil:
       quit(QuitFailure)
     discard set_term(ttyscr)
+    outFd = getFileHandle(ftty)
   else:
     discard initscr()
+  if console and not isLinuxConsole(outFd):
+    # -l swaps the console font, which only works on a Linux VT. Run in
+    # normal mode instead and say why once the screen is restored.
+    console = false
+    consoleNotice = "cmatrix-nim: -l needs a Linux virtual console (Ctrl+Alt+F3 etc.); " &
+                    "ran in normal mode instead."
   savetty()
   nonl()
   cbreak()
